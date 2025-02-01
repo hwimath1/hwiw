@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>나눗셈을 곱셈으로 나타내기</title>
+  <!-- MathJax 로드 -->
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" defer></script>
+  <style>
+    body {
+      margin: 0; padding: 0; box-sizing: border-box;
+      font-family: sans-serif; background: #f9f9f9;
+    }
+    #container {
+      width: 90%; max-width: 700px; margin: 0 auto; padding: 20px;
+      background: #fff; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      min-height: 100vh; display: flex; flex-direction: column; align-items: center; 
+      justify-content: flex-start; position: relative;
+    }
+    h1, h2, h3 {
+      text-align: center;
+    }
+    .hidden {
+      display: none;
+    }
+    #nameInputContainer {
+      display: flex; flex-direction: column; align-items: center; margin-top: 50px;
+    }
+    #nameInputContainer input {
+      width: 200px; padding: 8px; font-size: 16px; text-align: center;
+      margin-bottom: 20px;
+    }
+    .difficulty-btns button {
+      margin: 5px; padding: 10px 15px; font-size: 16px; cursor: pointer;
+    }
+    #quizScreen {
+      width: 100%; margin-top: 20px; text-align: center;
+    }
+    #scoreDisplay, #livesDisplay, #energyBarContainer, #timerDisplay, #globalTimeDisplay {
+      margin: 10px 0;
+    }
+    #energyBarContainer {
+      width: 100%; height: 20px; background: #ddd; border-radius: 10px;
+      overflow: hidden; position: relative; margin-bottom: 20px;
+    }
+    #energyBar {
+      height: 100%; width: 100%; background: linear-gradient(90deg, #82c91e, #51cf66);
+    }
+    .answerBtn {
+      display: block; width: 80%; margin: 8px auto; padding: 10px;
+      border: none; border-radius: 5px; font-size: 16px; cursor: pointer;
+      background: #e7f5ff;
+    }
+    .answerBtn:hover {
+      background: #d0ebff;
+    }
+    #finalScreen {
+      text-align: center; margin-top: 30px;
+    }
+    #response {
+      white-space: pre-wrap; margin-top: 10px; color: #555; font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+<div id="container">
+  <h1>나눗셈을 곱셈으로 나타내기</h1>
+
+  <!-- 시작 화면 -->
+  <div id="startScreen">
+    <div id="nameInputContainer">
+      <label for="playerName">이름을 입력하세요</label>
+      <input type="text" id="playerName" placeholder="이름" />
+    </div>
+    <h3>난이도를 선택해주세요</h3>
+    <div class="difficulty-btns">
+      <button onclick="startGame('최상')">최상 (20초, 20점)</button>
+      <button onclick="startGame('상')">상 (30초, 15점)</button>
+      <button onclick="startGame('중')">중 (40초, 13점)</button>
+      <button onclick="startGame('하')">하 (시간 무제한, 10점)</button>
+    </div>
+  </div>
+
+  <!-- 퀴즈 화면 -->
+  <div id="quizScreen" class="hidden">
+    <div id="globalTimeDisplay">전체 진행 시간: <span id="globalTime">00:00</span></div>
+    <div id="livesDisplay">남은 기회: 3</div>
+    <div id="scoreDisplay">점수: 0</div>
+    <div id="timerDisplay"></div>
+    <div id="energyBarContainer"><div id="energyBar"></div></div>
+    <div id="questionText"></div>
+    <div id="answersContainer"></div>
+  </div>
+
+  <!-- 최종 화면 -->
+  <div id="finalScreen" class="hidden">
+    <h2>게임 종료</h2>
+    <p id="finalScore"></p>
+    <button onclick="sendScore()">점수 전송</button>
+    <div id="response"></div>
+  </div>
+</div>
+
+<script>
+// ======================= 점수 서버 전송 함수 =======================
+function saveData(game, name, score, elapsedTime) {
+  const FUNCTION_URL = "https://us-central1-record-f420d.cloudfunctions.net/report";
+  const requestData = {
+    game,
+    name,
+    score: parseInt(score, 10),
+    elapsedTime: parseInt(elapsedTime, 10)
+  };
+
+  try {
+    fetch(FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestData)
+    })
+    .then(async (response) => {
+      const responseData = await response.json();
+      if (response.ok) {
+        document.getElementById('response').innerText =
+          `성공: ${JSON.stringify(responseData, null, 2)}`;
+      } else {
+        document.getElementById('response').innerText =
+          `오류: ${JSON.stringify(responseData, null, 2)}`;
+      }
+    })
+    .catch(error => {
+      console.error('요청 실패:', error);
+      document.getElementById('response').innerText =
+        `네트워크 오류: ${error.message}`;
+    });
+  } catch (error) {
+    console.error('요청 실패:', error);
+    document.getElementById('response').innerText = 
+      `네트워크 오류: ${error.message}`;
+  }
+}
+
+// ====================== 공통 함수 ======================
+function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const r = Math.floor(Math.random() * (i + 1));
+    [array[i], array[r]] = [array[r], array[i]];
+  }
+}
+function formatTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return String(m).padStart(2,'0') + ":" + String(s).padStart(2,'0');
+}
+
+// ================== 문제 데이터 (총 53문제) ===================
+
+// ---- Set 1: 넓이 문제 (5문제) ----
+const set1 = [
+{
+  question: `문제 1\n넓이가 \\(\\dfrac{18}{35}\\)\\(\\text{ cm}^2\\)인 직사각형이 있습니다.\n이 직사각형의 가로 길이가 \\(\\dfrac{9}{20}\\)\\(\\text{ cm}\\)일 때,\n세로 길이는 몇 cm입니까?`,
+  answers: [
+    { text: `1) \\(1\\dfrac{1}{7}\\text{ cm}\\)`, isCorrect: true },
+    { text: `2) \\(1\\dfrac{1}{9}\\text{ cm}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{7}{8}\\text{ cm}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{7}{9}\\text{ cm}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 2\n넓이가 \\(\\dfrac{5}{8}\\)\\(\\text{ cm}^2\\)인 직사각형이 있습니다.\n이 직사각형의 가로 길이가 \\(\\dfrac{1}{4}\\)\\(\\text{ cm}\\)일 때,\n세로 길이는 몇 cm입니까?`,
+  answers: [
+    { text: `1) \\(\\dfrac{5}{4}\\text{ cm}\\)`, isCorrect: false },
+    { text: `2) \\(2\\dfrac{1}{2}\\text{ cm}\\)`, isCorrect: true },
+    { text: `3) \\(2\\dfrac{1}{4}\\text{ cm}\\)`, isCorrect: false },
+    { text: `4) \\(3\\dfrac{1}{5}\\text{ cm}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 3\n넓이가 \\(\\dfrac{6}{7}\\)\\(\\text{ cm}^2\\)인 직사각형이 있습니다.\n이 직사각형의 가로 길이가 \\(\\dfrac{3}{14}\\)\\(\\text{ cm}\\)일 때,\n세로 길이는 몇 cm입니까?`,
+  answers: [
+    { text: `1) \\(2\\dfrac{1}{2}\\text{ cm}\\)`, isCorrect: false },
+    { text: `2) \\(3\\dfrac{4}{7}\\text{ cm}\\)`, isCorrect: false },
+    { text: `3) \\(4\\text{ cm}\\)`, isCorrect: true },
+    { text: `4) \\(4\\dfrac{1}{5}\\text{ cm}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 4\n넓이가 \\(\\dfrac{10}{9}\\)\\(\\text{ cm}^2\\)인 직사각형이 있습니다.\n이 직사각형의 가로 길이가 \\(\\dfrac{5}{6}\\)\\(\\text{ cm}\\)일 때,\n세로 길이는 몇 cm입니까?`,
+  answers: [
+    { text: `1) \\(1\\dfrac{1}{2}\\text{ cm}\\)`, isCorrect: false },
+    { text: `2) \\(1\\dfrac{1}{3}\\text{ cm}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{6}{7}\\text{ cm}\\)`, isCorrect: false },
+    { text: `4) \\(2\\dfrac{1}{3}\\text{ cm}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 5\n넓이가 \\(\\dfrac{3}{4}\\)\\(\\text{ cm}^2\\)인 직사각형이 있습니다.\n이 직사각형의 가로 길이가 \\(\\dfrac{1}{3}\\)\\(\\text{ cm}\\)일 때,\n세로 길이는 몇 cm입니까?`,
+  answers: [
+    { text: `1) \\(2\\dfrac{1}{2}\\text{ cm}\\)`, isCorrect: false },
+    { text: `2) \\(1\\dfrac{2}{5}\\text{ cm}\\)`, isCorrect: false },
+    { text: `3) \\(2\\dfrac{1}{4}\\text{ cm}\\)`, isCorrect: true },
+    { text: `4) \\(1\\dfrac{1}{3}\\text{ cm}\\)`, isCorrect: false }
+  ]
+}
+];
+
+// ---- Set 2: 세로 2/5 m 직사각형 문제 (5문제) ----
+const set2 = [
+{
+  question: `문제 1 (원문제)\n세로가 \\(\\dfrac{2}{5}\\)m인 직사각형의 넓이가 \\(\\dfrac{5}{6}\\)\\(\\text{m}^2\\)입니다.\n이 직사각형의 가로는 몇 m인지 대분수 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(2\\dfrac{1}{12}\\,\\text{m}\\)`, isCorrect: true },
+    { text: `2) \\(1\\dfrac{11}{12}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `3) \\(2\\dfrac{1}{6}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `4) \\(1\\dfrac{5}{6}\\,\\text{m}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 2\n세로가 \\(\\dfrac{3}{7}\\)m인 직사각형의 넓이가 \\(\\tfrac12\\)\\(\\text{m}^2\\)입니다.\n이 직사각형의 가로는 몇 m인지 대분수 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(\\dfrac{1}{3}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `2) \\(1\\dfrac{1}{6}\\,\\text{m}\\)`, isCorrect: true },
+    { text: `3) \\(1\\dfrac{1}{4}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `4) \\(1\\dfrac{1}{12}\\,\\text{m}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 3\n세로가 \\(\\dfrac{4}{9}\\)m인 직사각형의 넓이가 \\(\\dfrac{2}{3}\\)\\(\\text{m}^2\\)입니다.\n이 직사각형의 가로는 몇 m인지 대분수 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(1\\dfrac{1}{2}\\,\\text{m}\\)`, isCorrect: true },
+    { text: `2) \\(1\\dfrac{1}{3}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `3) \\(2\\dfrac{1}{2}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `4) \\(1\\dfrac{3}{4}\\,\\text{m}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 4\n세로가 \\(\\dfrac{5}{6}\\)m인 직사각형의 넓이가 \\(2\\dfrac{1}{2}\\)\\(\\text{m}^2\\)일 때,\n이 직사각형의 가로는 몇 m인지 대분수 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(2\\dfrac{1}{2}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `2) \\(2\\dfrac{2}{3}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `3) \\(3\\,\\text{m}\\)`, isCorrect: true },
+    { text: `4) \\(3\\dfrac{1}{4}\\,\\text{m}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 5\n세로가 \\(\\dfrac{4}{5}\\)m인 직사각형의 넓이가 \\(1\\dfrac{3}{5}\\)\\(\\text{m}^2\\)일 때,\n이 직사각형의 가로는 몇 m인지 대분수 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(1\\dfrac{1}{4}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `2) \\(2\\,\\text{m}\\)`, isCorrect: true },
+    { text: `3) \\(2\\dfrac{1}{4}\\,\\text{m}\\)`, isCorrect: false },
+    { text: `4) \\(1\\dfrac{4}{5}\\,\\text{m}\\)`, isCorrect: false }
+  ]
+}
+];
+
+// ---- Set 3: 들이가 6/7 L... (5문제) ----
+const set3 = [
+{
+  question: `문제 1 (원문제)\n들이가 \\(\\dfrac{6}{7}\\)L인 통에 주스가 가득 들어 있습니다.\n이 통의 주스를 덜어서 다른 통에 모두 옮기려면\n들이가 \\(\\dfrac{2}{9}\\)L인 컵으로 적어도 몇 번 덜어 내야 하는지 구하시오.`,
+  answers: [
+    { text: `1) 3번`, isCorrect: false },
+    { text: `2) 4번`, isCorrect: true },
+    { text: `3) 5번`, isCorrect: false },
+    { text: `4) 6번`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 2\n들이가 \\(\\dfrac{3}{4}\\)L인 통에 주스가 가득 들어 있습니다.\n이 통의 주스를 들이가 \\(\\dfrac{2}{15}\\)L인 컵으로 모두 옮기려면\n최소 몇 번 덜어 내야 하는지 구하시오.`,
+  answers: [
+    { text: `1) 5번`, isCorrect: false },
+    { text: `2) 6번`, isCorrect: true },
+    { text: `3) 7번`, isCorrect: false },
+    { text: `4) 4번`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 3\n들이가 \\(\\dfrac{5}{6}\\)L인 통에 주스가 가득 들어 있습니다.\n이 주스를 들이가 \\(\\dfrac{1}{6}\\)L인 컵으로 모두 옮기려면\n최소 몇 번 덜어 내야 하는지 구하시오.`,
+  answers: [
+    { text: `1) 3번`, isCorrect: false },
+    { text: `2) 4번`, isCorrect: false },
+    { text: `3) 5번`, isCorrect: true },
+    { text: `4) 6번`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 4\n들이가 \\(\\dfrac{7}{10}\\)L인 통에 주스가 가득 들어 있습니다.\n이 주스를 들이가 \\(\\dfrac{3}{20}\\)L인 컵으로 모두 옮기려면\n최소 몇 번 덜어 내야 하는지 구하시오.`,
+  answers: [
+    { text: `1) 4번`, isCorrect: false },
+    { text: `2) 5번`, isCorrect: true },
+    { text: `3) 6번`, isCorrect: false },
+    { text: `4) 7번`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 5\n들이가 \\(\\dfrac{11}{12}\\)L인 통에 주스가 가득 들어 있습니다.\n이 주스를 들이가 \\(\\dfrac{1}{4}\\)L인 컵으로 모두 옮기려면\n최소 몇 번 덜어 내야 하는지 구하시오.`,
+  answers: [
+    { text: `1) 3번`, isCorrect: false },
+    { text: `2) 4번`, isCorrect: true },
+    { text: `3) 5번`, isCorrect: false },
+    { text: `4) 6번`, isCorrect: false }
+  ]
+}
+];
+
+// ---- Set 4: (기약분수로 빈칸 채우기) 10문제 ----
+const set4 = [
+{
+  question: `문제 1 (원문제)\n\\(\\dfrac{5}{12} \\times \\square = \\dfrac{7}{24}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{7}{10}\\)`, isCorrect: true },
+    { text: `2) \\(\\dfrac{5}{9}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{6}{7}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{7}{12}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 2\n\\(\\dfrac{3}{5} \\times \\square = \\dfrac{9}{10}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{2}\\)`, isCorrect: true },
+    { text: `2) \\(\\dfrac{6}{5}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{5}{6}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{9}{5}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 3\n\\(\\dfrac{2}{3} \\times \\square = \\dfrac{1}{6}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{4}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{1}{4}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{2}{7}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{1}{3}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 4\n\\(\\dfrac{1}{4} \\times \\square = \\dfrac{3}{20}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{5}\\)`, isCorrect: true },
+    { text: `2) \\(\\dfrac{2}{5}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{4}{5}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{3}{10}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 5\n\\(\\dfrac{7}{9} \\times \\square = \\dfrac{14}{15}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{6}{5}\\)`, isCorrect: true },
+    { text: `2) \\(\\dfrac{5}{6}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{3}{4}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{9}{10}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 6\n\\(\\dfrac{5}{8} \\times \\square = \\dfrac{1}{4}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{5}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{2}{5}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{1}{5}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{5}{8}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 7\n\\(\\dfrac{4}{7} \\times \\square = \\dfrac{8}{21}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{5}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{2}{3}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{2}{5}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{1}{2}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 8\n\\(\\dfrac{3}{8} \\times \\square = \\dfrac{9}{20}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{4}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{4}{3}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{6}{5}\\)`, isCorrect: true },
+    { text: `4) \\(\\dfrac{6}{7}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 9\n\\(\\dfrac{11}{12} \\times \\square = \\dfrac{33}{40}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{4}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{4}{3}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{9}{10}\\)`, isCorrect: true },
+    { text: `4) \\(\\dfrac{10}{9}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 10\n\\(\\dfrac{5}{6} \\times \\square = \\dfrac{25}{36}\\)\n어느 것이 알맞을까요?`,
+  answers: [
+    { text: `1) \\(\\dfrac{5}{6}\\)`, isCorrect: true },
+    { text: `2) \\(\\dfrac{6}{5}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{5}{12}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{25}{30}\\)`, isCorrect: false }
+  ]
+}
+];
+
+// ---- Set 5: 귤 8/9 상자... (6문제) ----
+const set5 = [
+{
+  question: `문제 1 (원문제)\n귤 \\(\\dfrac{8}{9}\\) 상자의 무게가 \\(\\dfrac{2}{3}\\)kg입니다.\n귤 한 상자의 무게는 몇 kg입니까?`,
+  answers: [
+    { text: `1) \\(1\\dfrac{11}{16}\\,kg\\)`, isCorrect: false },
+    { text: `2) \\(1\\dfrac{1}{3}\\,kg\\)`, isCorrect: false },
+    { text: `3) \\(\\tfrac{3}{4}\\,kg\\)`, isCorrect: true },
+    { text: `4) \\(\\tfrac{16}{27}\\,kg\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 2\n사과 \\(\\dfrac{5}{6}\\) 상자의 무게가 \\(\\dfrac{2}{3}\\)kg입니다.\n사과 한 상자의 무게는 몇 kg입니까?`,
+  answers: [
+    { text: `1) \\(\\tfrac{4}{5}\\,kg\\)`, isCorrect: true },
+    { text: `2) \\(\\tfrac{5}{4}\\,kg\\)`, isCorrect: false },
+    { text: `3) \\(\\tfrac{7}{9}\\,kg\\)`, isCorrect: false },
+    { text: `4) \\(1\\dfrac{1}{6}\\,kg\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 3\n토마토 \\(\\dfrac{3}{4}\\) 상자의 무게가 \\(\\dfrac{3}{5}\\)kg입니다.\n토마토 한 상자의 무게는 몇 kg입니까?`,
+  answers: [
+    { text: `1) \\(\\tfrac{2}{3}\\,kg\\)`, isCorrect: false },
+    { text: `2) \\(\\tfrac{4}{5}\\,kg\\)`, isCorrect: true },
+    { text: `3) \\(\\tfrac{4}{7}\\,kg\\)`, isCorrect: false },
+    { text: `4) \\(\\tfrac{9}{10}\\,kg\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 4\n수박 \\(\\dfrac{9}{10}\\) 상자의 무게가 \\(\\dfrac{3}{4}\\)kg입니다.\n수박 한 상자의 무게는 몇 kg입니까?`,
+  answers: [
+    { text: `1) \\(\\tfrac{5}{6}\\,kg\\)`, isCorrect: true },
+    { text: `2) \\(\\tfrac{6}{5}\\,kg\\)`, isCorrect: false },
+    { text: `3) \\(\\tfrac{3}{8}\\,kg\\)`, isCorrect: false },
+    { text: `4) \\(\\tfrac{4}{7}\\,kg\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 5\n딸기 \\(\\dfrac{5}{7}\\) 상자의 무게가 \\(\\tfrac12\\)kg입니다.\n딸기 한 상자의 무게는 몇 kg입니까?`,
+  answers: [
+    { text: `1) \\(\\tfrac{2}{5}\\,kg\\)`, isCorrect: false },
+    { text: `2) \\(\\tfrac{7}{10}\\,kg\\)`, isCorrect: true },
+    { text: `3) \\(\\tfrac{7}{12}\\,kg\\)`, isCorrect: false },
+    { text: `4) \\(\\tfrac{4}{9}\\,kg\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 6\n포도 \\(\\dfrac{2}{3}\\) 상자의 무게가 \\(\\dfrac{4}{5}\\)kg입니다.\n포도 한 상자의 무게는 몇 kg입니까?`,
+  answers: [
+    { text: `1) \\(\\tfrac{5}{6}\\,kg\\)`, isCorrect: false },
+    { text: `2) \\(\\tfrac{9}{10}\\,kg\\)`, isCorrect: false },
+    { text: `3) \\(\\tfrac{6}{5}\\,kg\\)`, isCorrect: true },
+    { text: `4) \\(\\tfrac{8}{7}\\,kg\\)`, isCorrect: false }
+  ]
+}
+];
+
+// ---- Set 6: 두 수 중 작은 수를 큰 수로 나눈 몫 (6문제) ----
+const set6 = [
+{
+  question: `문제 1\n**두 수 중 작은 수를 큰 수로 나눈 몫을 기약분수로 나타내시오.**\n\\(\\dfrac{2}{9},\\quad \\dfrac{6}{11}\\)`,
+  answers: [
+    { text: `1) \\(\\dfrac{11}{27}\\)`, isCorrect: true },
+    { text: `2) \\(\\dfrac{12}{27}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{14}{27}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{11}{26}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 2\n**두 수 중 작은 수를 큰 수로 나눈 몫을 기약분수로 나타내시오.**\n\\(\\dfrac{1}{4},\\quad \\dfrac{3}{10}\\)`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{8}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{3}{5}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{5}{6}\\)`, isCorrect: true },
+    { text: `4) \\(\\dfrac{2}{5}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 3\n**두 수 중 작은 수를 큰 수로 나눈 몫을 기약분수로 나타내시오.**\n\\(\\dfrac{7}{12},\\quad \\dfrac{5}{6}\\)`,
+  answers: [
+    { text: `1) \\(\\dfrac{7}{10}\\)`, isCorrect: true },
+    { text: `2) \\(\\dfrac{6}{5}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{5}{7}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{7}{12}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 4\n**두 수 중 작은 수를 큰 수로 나눈 몫을 기약분수로 나타내시오.**\n\\(\\dfrac{2}{7},\\quad \\dfrac{3}{14}\\)`,
+  answers: [
+    { text: `1) \\(\\dfrac{4}{3}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{1}{2}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{3}{4}\\)`, isCorrect: true },
+    { text: `4) \\(\\dfrac{3}{8}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 5\n**두 수 중 작은 수를 큰 수로 나눈 몫을 기약분수로 나타내시오.**\n\\(\\dfrac{11}{15},\\quad \\dfrac{7}{10}\\)`,
+  answers: [
+    { text: `1) \\(\\dfrac{19}{20}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{15}{22}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{7}{11}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{21}{22}\\)`, isCorrect: true }
+  ]
+},
+{
+  question: `문제 6\n**두 수 중 작은 수를 큰 수로 나눈 몫을 기약분수로 나타내시오.**\n\\(\\dfrac{4}{9},\\quad \\dfrac{3}{7}\\)`,
+  answers: [
+    { text: `1) \\(\\dfrac{9}{28}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{27}{28}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{3}{4}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{7}{8}\\)`, isCorrect: false }
+  ]
+}
+];
+
+// ---- Set 7: (5/12 × 3/8...) 5문제 ----
+const set7 = [
+{
+  question: `문제 1 (원문제)\n계산 결과는 어느 것입니까?\n\\(\\dfrac{5}{12} \\times \\dfrac{3}{8}\\)`,
+  answers: [
+    { text: `1) \\(\\dfrac{5}{32}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{9}{10}\\)`, isCorrect: false },
+    { text: `3) \\(1\\dfrac{1}{9}\\)`, isCorrect: true },
+    { text: `4) \\(6\\dfrac{2}{5}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 2\n다음을 계산한 결과는 어느 것입니까?\n\\(\\dfrac{7}{15} \\div \\dfrac{2}{5}\\)`,
+  answers: [
+    { text: `1) \\(\\dfrac{5}{6}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{6}{7}\\)`, isCorrect: false },
+    { text: `3) \\(1\\dfrac{1}{6}\\)`, isCorrect: true },
+    { text: `4) \\(\\dfrac{11}{12}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 3\n다음을 계산한 결과는 어느 것입니까?\n\\(\\dfrac{8}{9} \\div \\dfrac{4}{9}\\)`,
+  answers: [
+    { text: `1) \\(1\\dfrac{4}{9}\\)`, isCorrect: false },
+    { text: `2) 2`, isCorrect: true },
+    { text: `3) \\(\\dfrac{8}{9}\\)`, isCorrect: false },
+    { text: `4) \\(1\\dfrac{8}{9}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 4\n다음을 계산한 결과는 어느 것입니까?\n\\(\\dfrac{4}{5} \\div \\dfrac{2}{3}\\)`,
+  answers: [
+    { text: `1) \\(1\\dfrac{2}{5}\\)`, isCorrect: false },
+    { text: `2) \\(1\\dfrac{1}{5}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{4}{5}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{9}{10}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 5\n다음을 계산한 결과는 어느 것입니까?\n\\(\\dfrac{11}{16} \\div \\dfrac{1}{8}\\)`,
+  answers: [
+    { text: `1) \\(\\dfrac{11}{2}\\)`, isCorrect: false },
+    { text: `2) \\(5\\dfrac{1}{2}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{11}{4}\\)`, isCorrect: false },
+    { text: `4) \\(5\\dfrac{1}{4}\\)`, isCorrect: false }
+  ]
+}
+];
+
+// ---- Set 8: (영무 10/13, 준희 21/26...) 5문제 ----
+const set8 = [
+{
+  question: `문제 1 (원문제)\n영무는 \\(\\tfrac{10}{13}\\,\\mathrm{m}\\), 준희는 \\(\\tfrac{21}{26}\\,\\mathrm{m}\\)의 색 테이프를 가지고 있습니다.\n영무가 가지고 있는 색 테이프의 길이는 준희가 가지고 있는 색 테이프의 길이의 몇 배인지 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(\\tfrac{20}{21}\\)`, isCorrect: true },
+    { text: `2) \\(\\tfrac{21}{20}\\)`, isCorrect: false },
+    { text: `3) \\(\\tfrac{10}{13}\\)`, isCorrect: false },
+    { text: `4) \\(\\tfrac{26}{21}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 2\n영무는 \\(\\tfrac{5}{6}\\,\\mathrm{m}\\), 준희는 \\(\\tfrac{5}{8}\\,\\mathrm{m}\\)의 색 테이프를 가지고 있습니다.\n영무가 가진 테이프 길이는 준희가 가진 테이프 길이의 몇 배인지 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(\\tfrac{4}{5}\\)`, isCorrect: false },
+    { text: `2) \\(\\tfrac{6}{5}\\)`, isCorrect: false },
+    { text: `3) \\(\\tfrac{5}{6}\\)`, isCorrect: false },
+    { text: `4) \\(\\tfrac{4}{3}\\)`, isCorrect: true }
+  ]
+},
+{
+  question: `문제 3\n영무는 \\(\\tfrac{7}{12}\\,\\mathrm{m}\\), 준희는 \\(\\tfrac{7}{18}\\,\\mathrm{m}\\)의 색 테이프를 가지고 있습니다.\n영무가 가진 테이프 길이는 준희가 가진 테이프 길이의 몇 배인지 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(\\tfrac{2}{3}\\)`, isCorrect: false },
+    { text: `2) \\(\\tfrac{5}{6}\\)`, isCorrect: false },
+    { text: `3) \\(\\tfrac{3}{2}\\)`, isCorrect: true },
+    { text: `4) \\(\\tfrac{7}{6}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 4\n영무는 \\(\\tfrac{9}{10}\\,\\mathrm{m}\\), 준희는 \\(\\tfrac{2}{5}\\,\\mathrm{m}\\)의 색 테이프를 가지고 있습니다.\n영무가 가진 테이프 길이는 준희가 가진 테이프 길이의 몇 배인지 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(\\tfrac{9}{4}\\)`, isCorrect: true },
+    { text: `2) \\(\\tfrac{4}{9}\\)`, isCorrect: false },
+    { text: `3) \\(\\tfrac{9}{10}\\)`, isCorrect: false },
+    { text: `4) \\(\\tfrac{2}{5}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 5\n영무는 \\(\\tfrac{11}{15}\\,\\mathrm{m}\\), 준희는 \\(\\tfrac{11}{25}\\,\\mathrm{m}\\)의 색 테이프를 가지고 있습니다.\n영무가 가진 테이프 길이는 준희가 가진 테이프 길이의 몇 배인지 기약분수로 나타내시오.`,
+  answers: [
+    { text: `1) \\(\\tfrac{3}{5}\\)`, isCorrect: false },
+    { text: `2) \\(\\tfrac{5}{3}\\)`, isCorrect: true },
+    { text: `3) \\(\\tfrac{10}{11}\\)`, isCorrect: false },
+    { text: `4) \\(\\tfrac{11}{5}\\)`, isCorrect: false }
+  ]
+}
+];
+
+// ---- Set 9: (5/8 ÷ 7/9 같은 것) 6문제, 4지선다 ----
+const set9 = [
+{
+  question: `문제 1 (원문제)\n다음 중 \\(\\dfrac{5}{8} \\div \\dfrac{7}{9}\\)과 계산 결과가 같은 것은 어느 것입니까?`,
+  answers: [
+    { text: `1) \\(\\dfrac{5}{8} \\div \\dfrac{9}{7}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{5}{8} \\times \\dfrac{9}{7}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{8}{5} \\times \\dfrac{9}{7}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{8}{5} \\times \\dfrac{7}{9}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 2\n다음 중 \\(\\dfrac{3}{4} \\div \\dfrac{2}{7}\\)과 계산 결과가 같은 것은 어느 것입니까?`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{4} \\times \\dfrac{2}{7}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{4}{3} \\div \\dfrac{2}{7}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{3}{4} \\div \\dfrac{7}{2}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{3}{4} \\times \\dfrac{7}{2}\\)`, isCorrect: true }
+  ]
+},
+{
+  question: `문제 3\n다음 중 \\(\\dfrac{5}{6} \\div \\dfrac{1}{8}\\)과 계산 결과가 같은 것은 어느 것입니까?`,
+  answers: [
+    { text: `1) \\(\\dfrac{5}{8} \\times \\dfrac{6}{1}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{6}{5} \\times \\dfrac{8}{1}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{5}{6} \\div \\dfrac{8}{1}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{5}{6} \\times \\dfrac{8}{1}\\)`, isCorrect: true }
+  ]
+},
+{
+  question: `문제 4\n다음 중 \\(\\dfrac{4}{9} \\div \\dfrac{2}{3}\\)과 계산 결과가 같은 것은 어느 것입니까?`,
+  answers: [
+    { text: `1) \\(\\dfrac{4}{9} \\div \\dfrac{3}{2}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{4}{9} \\times \\dfrac{3}{2}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{9}{4} \\times \\dfrac{3}{2}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{9}{4} \\times \\dfrac{2}{3}\\)`, isCorrect: false }
+  ]
+},
+{
+  question: `문제 5\n다음 중 \\(\\dfrac{7}{10} \\div \\dfrac{2}{5}\\)과 계산 결과가 같은 것은 어느 것입니까?`,
+  answers: [
+    { text: `1) \\(\\dfrac{7}{10} \\times \\dfrac{2}{5}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{2}{5} \\div \\dfrac{7}{10}\\)`, isCorrect: false },
+    { text: `3) \\(\\dfrac{7}{10} \\div \\dfrac{5}{2}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{7}{10} \\times \\dfrac{5}{2}\\)`, isCorrect: true }
+  ]
+},
+{
+  question: `문제 6\n다음 중 \\(\\dfrac{3}{5} \\div \\dfrac{9}{10}\\)과 계산 결과가 같은 것은 어느 것입니까?`,
+  answers: [
+    { text: `1) \\(\\dfrac{3}{5} \\div \\dfrac{10}{9}\\)`, isCorrect: false },
+    { text: `2) \\(\\dfrac{3}{5} \\times \\dfrac{10}{9}\\)`, isCorrect: true },
+    { text: `3) \\(\\dfrac{5}{3} \\times \\dfrac{9}{10}\\)`, isCorrect: false },
+    { text: `4) \\(\\dfrac{3}{5} \\times \\dfrac{9}{10}\\)`, isCorrect: false }
+  ]
+}
+];
+
+// 모든 문제 통합 (총 53문제)
+let allQuestions = [
+  ...set1, ...set2, ...set3, ...set4,
+  ...set5, ...set6, ...set7, ...set8,
+  ...set9
+];
+
+// ================== 게임 상태 ===================
+let playerName = "";
+let difficulty = "";
+let score = 0;
+let lives = 3;
+let questionIndex = 0; 
+let questionTime = 0;  
+let timer = null;      
+let globalTimer = null; 
+let elapsedTime = 0;   
+let startTimestamp = 0;
+let usedQuestions = [];
+
+// ================== 게임 시작 ===================
+function startGame(diff) {
+  const nameInput = document.getElementById('playerName');
+  if (!nameInput.value.trim()) {
+    alert("이름을 입력해주세요!");
+    return;
+  }
+  playerName = nameInput.value.trim();
+  difficulty = diff;
+
+  switch(difficulty) {
+    case '최상': questionTime = 20; break;
+    case '상':   questionTime = 30; break;
+    case '중':   questionTime = 40; break;
+    case '하':   questionTime = 0;  break; 
+  }
+
+  document.getElementById('startScreen').classList.add('hidden');
+  document.getElementById('quizScreen').classList.remove('hidden');
+
+  startTimestamp = Date.now();
+  globalTimer = setInterval(updateGlobalTime, 1000);
+
+  shuffleArray(allQuestions);
+
+  score = 0;
+  lives = 3;
+  questionIndex = 0;
+  usedQuestions = [];
+
+  updateStatusDisplays();
+  showNextQuestion();
+}
+
+function updateGlobalTime() {
+  const now = Date.now();
+  elapsedTime = Math.floor((now - startTimestamp) / 1000);
+  document.getElementById('globalTime').innerText = formatTime(elapsedTime);
+}
+
+function updateStatusDisplays() {
+  document.getElementById('livesDisplay').innerText = `남은 기회: ${lives}`;
+  document.getElementById('scoreDisplay').innerText = `점수: ${score}`;
+}
+
+function showNextQuestion() {
+  if (lives <= 0 || questionIndex >= allQuestions.length) {
+    endGame();
+    return;
+  }
+  let currentQuestion = allQuestions[questionIndex];
+  // 중복 확인
+  while (usedQuestions.includes(currentQuestion)) {
+    questionIndex++;
+    if (questionIndex >= allQuestions.length) {
+      endGame();
+      return;
+    }
+    currentQuestion = allQuestions[questionIndex];
+  }
+  usedQuestions.push(currentQuestion);
+
+  document.getElementById('questionText').innerText = currentQuestion.question;
+
+  const answersContainer = document.getElementById('answersContainer');
+  answersContainer.innerHTML = "";
+
+  // 보기 섞기
+  let ansCopy = currentQuestion.answers.map(a => ({...a}));
+  shuffleArray(ansCopy);
+
+  ansCopy.forEach(ansObj => {
+    const btn = document.createElement('button');
+    btn.className = "answerBtn";
+    btn.innerHTML = ansObj.text;
+    btn.onclick = () => {
+      if (ansObj.isCorrect) {
+        handleCorrect();
+      } else {
+        handleWrong(currentQuestion);
+      }
+    };
+    answersContainer.appendChild(btn);
+  });
+
+  if (difficulty === '하') {
+    document.getElementById('energyBarContainer').style.visibility = 'hidden';
+    document.getElementById('timerDisplay').innerText = "시간 제한 없음";
+  } else {
+    document.getElementById('energyBarContainer').style.visibility = 'visible';
+    startQuestionTimer();
+  }
+
+  // 수식 렌더링
+  setTimeout(() => {
+    MathJax.typeset();
+  }, 50);
+}
+
+function handleCorrect() {
+  let point = 0;
+  switch(difficulty) {
+    case '최상': point = 20; break;
+    case '상':   point = 15; break;
+    case '중':   point = 13; break;
+    case '하':   point = 10; break;
+  }
+  score += point;
+  stopQuestionTimer();
+  questionIndex++;
+  updateStatusDisplays();
+  showNextQuestion();
+}
+
+function handleWrong(q) {
+  stopQuestionTimer();
+  lives--;
+  const correctAns = q.answers.find(a => a.isCorrect);
+  alert("틀렸습니다!\n정답: " + (correctAns ? correctAns.text : "(없음)"));
+  updateStatusDisplays();
+  if (lives <= 0) {
+    endGame();
+  } else {
+    questionIndex++;
+    showNextQuestion();
+  }
+}
+
+let timeLeft = 0;
+function startQuestionTimer() {
+  timeLeft = questionTime;
+  updateEnergyBar();
+  document.getElementById('timerDisplay').innerText = `남은 시간: 약 ${timeLeft}초`;
+  if (timer) clearInterval(timer);
+  timer = setInterval(() => {
+    timeLeft--;
+    document.getElementById('timerDisplay').innerText = `남은 시간: 약 ${timeLeft}초`;
+    updateEnergyBar();
+    if (timeLeft <= 0) {
+      clearInterval(timer);
+      handleTimeUp();
+    }
+  }, 1000);
+}
+
+function stopQuestionTimer() {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
+
+function updateEnergyBar() {
+  const bar = document.getElementById('energyBar');
+  if (difficulty === '하') {
+    bar.style.width = "100%";
+    return;
+  }
+  const w = (timeLeft / questionTime) * 100;
+  bar.style.width = w + "%";
+}
+
+function handleTimeUp() {
+  lives--;
+  alert("시간 초과! 기회가 1 줄어듭니다.");
+  updateStatusDisplays();
+  questionIndex++;
+  if (lives <= 0) {
+    endGame();
+  } else {
+    showNextQuestion();
+  }
+}
+
+function endGame() {
+  stopQuestionTimer();
+  clearInterval(globalTimer);
+  document.getElementById('quizScreen').classList.add('hidden');
+  document.getElementById('finalScreen').classList.remove('hidden');
+  document.getElementById('finalScore').innerText = `최종 점수: ${score}점`;
+}
+
+// 점수 서버 전송
+function sendScore() {
+  saveData("나눗셈을 곱셈으로 나타내기", playerName, score, elapsedTime);
+}
+</script>
+</body>
+</html>
